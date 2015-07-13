@@ -18,12 +18,8 @@ See Sokal (1997) for justification and estimation of IAT and EAT.
 """
 
 import numpy as np
-import matplotlib.pyplot as plt
 import pdb
 from collections import Counter
-from scipy.stats import kendalltau
-
-plt.style.use("ggplot")
 
 
 
@@ -148,13 +144,8 @@ class MC2Diagnostics:
         self.int_autocor = np.array([est_int_autocor(acf) for acf in self.acfs])
 
         
-    def summarize(self, plot=False):
+    def summarize(self):
         """Summarize sampling properties of all series.
-
-        Parameters
-        ----------
-        plot : bool
-            draw a plot of the estimated means and their 95% confidence band. Notice that bands only account for sampling uncertainty, but not for the uncertainty involved in IAT estimation
 
         Returns
         -------
@@ -169,18 +160,6 @@ class MC2Diagnostics:
         ess = (self.samples.shape[0] - ndiscard) / 2 / self.int_autocor
         means = np.array([np.mean(series) for series in self.samples.T])
         stderr = (np.array([np.var(series) for series in self.samples.T]) / ess) ** 0.5
-
-        if plot:
-            plt.errorbar(
-                range(1, len(means) + 1),
-                means,
-                fmt="o",
-                color="#444444",
-                alpha=0.5,
-                yerr=1.96*stderr,
-                ecolor="#e41a1c"
-            )
-            plt.show()
         
         return {
             "ess": ess,
