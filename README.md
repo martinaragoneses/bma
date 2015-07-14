@@ -1,5 +1,5 @@
-BMA
-===
+Bayesian Model Averaging
+========================
 
 Provides routines for Bayesian Model Averaging (BMA). BMA searches a model space (e.g. linear regression models) for promising models and computes the posterior probability distribution over that space. Coefficients are then estimated from a weighted average over the model space.
 
@@ -10,7 +10,7 @@ TOC
 ---
 
 The following scripts are relevant for end users:
-- `linear_averaging.py` contains routines for Bayesian linear regression.
+- `linear_regression.py` contains routines for Bayesian linear regression.
 - `linear_averaging.py` contains routines for linear BMA.
 - `sim.py` demonstrates basic usage of linear BMA.
 
@@ -30,7 +30,9 @@ Basic usage is demonstrated in `sim.py`. Given regressors *X* and response *y* Y
 
 `
 mod = linear_averaging.LinearMC3(X, y, g, p)
+
 mod.select()
+
 mod.estimate()
 `
 
