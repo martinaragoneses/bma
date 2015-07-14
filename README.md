@@ -28,13 +28,13 @@ The specific Bayesian regression model I use expects 2 hyperparameters:
 
 Basic usage is demonstrated in `sim.py`. Given regressors *X* and response *y* You can fit the model by executing
 
-`
+```python
 mod = linear_averaging.LinearMC3(X, y, g, p)
 
 mod.select()
 
 mod.estimate()
-`
+```
 
 The first step computes the posterior model distribution, the second computes the posterior distributions over the model parameters.
 
@@ -46,9 +46,9 @@ Dependencies
 
 All scripts were written with Python 3 in mind and require the usual set of scientific Python libraries. They can be converted to Python 2.7 with minimal changes. It is crucial to enable *true division* by adding the following line to all scripts:
 
-`
+```python
 from __future__ import division
-`
+```
 
 
 References
