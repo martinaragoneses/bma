@@ -166,7 +166,7 @@ class LinearModel(object):
         prediction matrix
     y : np.ndarray
         response vector
-    posteriors: dict
+    posterior: dict
         posterior distribution over the model parameters including
         "shape", "rate", "location", "precision"
     estimates: dict
@@ -178,12 +178,36 @@ class LinearModel(object):
     def __init__(self, X, y, penalty_par):
 
         self.nobs, self.ndim = X.shape
-            
         self.X = X
         self.y = y
         self.penalty_par = penalty_par
+    
+    
+    def estimate(self):
+        """Compute the parameters of the posterior distribution of the model coefficients.
+        """
 
-        self._fit()
+        design = np.hstack((np.ones((self.nobs, 1)), self.X))
+        sub_quadrant = (1 + 1 / self.nobs / self.penalty_par) * np.dot(self.X.T, self.X)
+        
+        precision = np.vstack((
+            np.hstack((self.nobs, np.sum(self.X, 0).T)),
+            np.hstack((np.sum(self.X, 0, keepdims=True).T, sub_quadrant))
+        ))
+        location = np.linalg.solve(precision, np.dot(design.T, self.y))
+        shape = (self.nobs - 1) / 2
+        rate = 0.5 * np.dot(self.y - np.dot(design, location), self.y)
+
+        self.posterior = {
+            "shape": shape,
+            "rate": rate,
+            "location": location,
+            "precision": precision
+        }
+        self.estimates = {
+            "coefficients": location,
+            "res_precision": shape / rate
+        }
 
         
     def predict(self, X_new):
@@ -263,30 +287,3 @@ class LinearModel(object):
         res_draws = np.random.randn(ndraws) / ng_draws["gamma"] ** 0.5
 
         return np.dot(ng_draws["normal"], np.hstack((1, x_new))) + res_draws
-    
-    
-    def _fit(self):
-        """Compute the parameters of the posterior distribution.
-        """
-
-        design = np.hstack((np.ones((self.nobs, 1)), self.X))
-        sub_quadrant = (1 + 1 / self.nobs / self.penalty_par) * np.dot(self.X.T, self.X)
-        
-        precision = np.vstack((
-            np.hstack((self.nobs, np.sum(self.X, 0).T)),
-            np.hstack((np.sum(self.X, 0, keepdims=True).T, sub_quadrant))
-        ))
-        location = np.linalg.solve(precision, np.dot(design.T, self.y))
-        shape = (self.nobs - 1) / 2
-        rate = 0.5 * np.dot(self.y - np.dot(design, location), self.y)
-
-        self.posterior = {
-            "shape": shape,
-            "rate": rate,
-            "location": location,
-            "precision": precision
-        }
-        self.estimates = {
-            "coefficients": location,
-            "res_precision": shape / rate
-        }

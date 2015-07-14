@@ -9,7 +9,7 @@ You can adapt the routines to any model space by providing its marginal likeliho
 
 References
 ----------
-See Kass and Wassermann (1995) and Kass and Raftery (1995) for bayesian model averaging and MC3.
+See Kass and Wassermann (1995) and Kass and Raftery (1995) for Bayesian model averaging and MC3.
 """
 
 import numpy as np
@@ -64,7 +64,7 @@ class InputError(Exception):
 class Enumerator(object):
     """Generic model averaging routine.
 
-    Computes the posterior distribution over the model space. Full enumeration requires the computation of 2^ndim posteriors. Thus, the method does not scale well beyond 15 dimensions.
+    Computes the posterior distribution over the model space. Full enumeration requires the computation of 2^ndim probabilities. Thus, the method does not scale well beyond 15 dimensions.
 
     Parameters
     ----------
@@ -87,7 +87,7 @@ class Enumerator(object):
         prediction matrix
     y : np.ndarray
         response vector
-    posteriors: Counter
+    posterior: Counter
         posterior distribution over the model space where
         str(model) is the key and the posterior probability is the value
     """
@@ -120,7 +120,7 @@ class Enumerator(object):
         posteriors = np.e ** (priors + likelihoods - log_sum_exp(priors + likelihoods))
         
         # summarize
-        self.posteriors = Counter({
+        self.posterior = Counter({
             str(models[i]):posteriors[i]
             for i in range(len(models))
         })
@@ -136,8 +136,8 @@ class Enumerator(object):
         """
 
         weighted_models = np.array([
-            posterior * np.fromstring(model[1:-1], dtype=bool, sep=" ")
-            for model, posterior in self.posteriors.items()
+            weight * np.fromstring(model[1:-1], dtype=bool, sep=" ")
+            for model, weight in self.posterior.items()
         ])
         
         return np.sum(weighted_models, 0)
@@ -158,8 +158,8 @@ class Enumerator(object):
         """
     
         return sum(
-            posterior
-            for model, posterior in self.posteriors.items()
+            weight
+            for model, weight in self.posterior.items()
             if np.all(np.fromstring(model[1:-1], sep=" ")[indices])
         )
 
@@ -173,12 +173,12 @@ class Enumerator(object):
             (ndim + 1 x 1) posterior model size probabilities
         """
         
-        posterior = np.zeros(self.ndim + 1)
+        dist = np.zeros(self.ndim + 1)
         
-        for model, post in self.posteriors.items():
-            posterior[np.sum(np.fromstring(model[1:-1], sep=" "))] += post
+        for model, weight in self.posterior.items():
+            dist[np.sum(np.fromstring(model[1:-1], sep=" "))] += weight
 
-        return posterior
+        return dist
         
         
 
@@ -208,7 +208,7 @@ class MC3(Enumerator, mcmc.MetropolisSampler):
         prediction matrix
     y : np.ndarray
         response vector
-    posteriors: Counter
+    posterior: Counter
         posterior distribution over the model space where
         str(model) is the key and the posterior probability is the value
     """
@@ -233,7 +233,7 @@ class MC3(Enumerator, mcmc.MetropolisSampler):
         for i in range(self.draws.shape[0]):
             counts[str(np.array(self.draws[i,:], dtype=int)).replace("\n", "")] += 1
             
-        self.posteriors = Counter({
+        self.posterior = Counter({
             key:(counts[key] / sum(counts.values()))
             for key in counts
         })

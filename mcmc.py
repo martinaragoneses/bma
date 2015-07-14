@@ -117,11 +117,11 @@ class MetropolisSampler(object):
     Parameters
     ----------
     rv_prob_func : func
-        probability measure on the random variable
+        log probability measure on the random variable
     proposal_func : func
         draw from the proposal distribution given the current state
     proposal_prob_func : func
-        probability measure on the proposal distribution
+        log probability measure on the proposal distribution
     
     Attributes
     ----------

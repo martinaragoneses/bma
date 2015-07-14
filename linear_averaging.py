@@ -11,7 +11,7 @@ You may compute Pr[M|y] directly by finding the posterior probability of all pos
 
 References
 ----------
-See Liang et al. (2008) for the specific probability model and its properties
+See Liang et al. (2008) for linear model averaging.
 """
 
 import numpy as np
@@ -41,7 +41,7 @@ def log_gamma(x):
 class LinearEnumerator(core.Enumerator):
     """Computes the posterior probability distribution over the space of linear regression models.
 
-    This method computes 2^d posteriors, where d is the number of predictors. Use MC3 for larger d.
+    This method computes 2^d probabilities, where d is the number of predictors. Use MC3 for larger d.
     
     Parameters
     ----------
@@ -65,7 +65,7 @@ class LinearEnumerator(core.Enumerator):
         prediction matrix
     y : np.ndarray
         response vector
-    posteriors: Counter
+    posterior: Counter
         posterior distribution over the model space where
         str(model) is the key and the posterior probability is the value
     estimates: dict
@@ -78,7 +78,30 @@ class LinearEnumerator(core.Enumerator):
         self.nobs, self.ndim = X.shape
         self.X = X
         self.y = y
-        self.par = {"penalty": penalty_par, "incl": incl_par}
+        self.par = {"penalty": penalty_par, "incl": incl_par}    
+
+        
+    def estimate(self):
+        """Compute point estimates of the model parameters.
+        """
+        
+        self.estimates = {
+            "coefficients": np.zeros(self.X.shape[1] + 1),
+            "res_precision": 0
+        }
+        
+        for model, weight in self.posterior.items():
+            
+            mask = np.fromstring(model[1:-1], dtype=bool, sep=" ")
+            model = linear_regression.LinearModel(
+                self.X[:, mask],
+                self.y,
+                self.par["penalty"]
+            )
+            model.estimate()
+            
+            self.estimates["coefficients"][np.hstack((True, mask))] += weight * model.estimates["coefficients"]
+            self.estimates["res_precision"] += weight * model.estimates["res_precision"]
         
 
     def predict(self, X_new):
@@ -115,64 +138,29 @@ class LinearEnumerator(core.Enumerator):
 
         model_draws = np.random.multinomial(
             ndraws,
-            list(self.posteriors.values())
+            list(self.posterior.values())
         )
 
-        draws = []
-        for i in range(len(model_draws)):
+        draws = np.empty(0)
+        for i, ndraws in enumerate(model_draws):
             
-            if model_draws[i] == 0:
+            if ndraws == 0:
                 continue
             
             mask = np.fromstring(
-                list(self.posteriors.keys())[i][1:-1],
+                list(self.posterior.keys())[i][1:-1],
                 dtype=bool,
                 sep=" "
             )
-            draws += list(linear_regression.LinearModel(
+            
+            model = linear_regression.LinearModel(
                 self.X[:, mask],
                 self.y,
                 self.par["penalty"]
-            ).residual_dist(model_draws[i]))
-
-        return draws
-
-
-    def coef_dist(self, ndraws=1000):
-        """Draw from the posterior distribution of the regression coefficients.
-
-        Parameters
-        ----------
-        ndraws : int {1, .., inf}, default 1000
-            number of draws
-
-        Retrurns
-        --------
-        np.ndarray
-            matrix of draws
-        """
-
-        model_draws = np.random.multinomial(
-            ndraws,
-            list(self.posteriors.values())
-        )
-
-        draws = []
-        for i in range(len(model_draws)):
-            
-            if model_draws[i] == 0:
-                continue
-            
-            mask = np.fromstring(
-                list(self.posteriors.keys())[i][1:-1],
-                dtype=bool,
-                sep=" "
             )
-            draws += list(linear_regression.LinearModel(
-                self.X[:, mask],
-                self.y,
-                self.par["penalty"]
-            ).coef_dist(model_draws[i]))
+            model.estimate()
+            
+            draws = np.append(draws, model.residual_dist(ndraws))
 
         return draws
     
@@ -195,54 +183,31 @@ class LinearEnumerator(core.Enumerator):
 
         model_draws = np.random.multinomial(
             ndraws,
-            list(self.posteriors.values())
+            list(self.posterior.values())
         )
 
-        draws = []
-        for i in range(len(model_draws)):
+        draws = np.empty(0)
+        for i, ndraws in enumerate(model_draws):
             
-            if model_draws[i] == 0:
+            if ndraws == 0:
                 continue
             
             mask = np.fromstring(
-                list(self.posteriors.keys())[i][1:-1],
+                list(self.posterior.keys())[i][1:-1],
                 dtype=bool,
                 sep=" "
             )
-            draws += list(linear_regression.LinearModel(
+            
+            model = linear_regression.LinearModel(
                 self.X[:, mask],
                 self.y,
                 self.par["penalty"]
-            ).predictive_dist(x_new[mask], model_draws[i]))
+            )
+            model.estimate()
+            
+            draws = np.append(draws, model.predictive_dist(x_new[mask], ndraws))
 
         return draws
-        
-
-    def _estimate(self):
-        """Compute point estimates of the model parameters.
-
-        Parameters
-        ----------
-        penalty_par : float (0, inf)
-            dimensionality penalty
-        """
-        
-        self.estimates = {
-            "coefficients": np.zeros(self.X.shape[1] + 1),
-            "res_precision": 0
-        }
-        
-        for model, posterior in self.posteriors.items():
-            
-            mask = np.fromstring(model[1:-1], dtype=bool, sep=" ")
-            estimates = linear_regression.LinearModel(
-                self.X[:, mask],
-                self.y,
-                self.par["penalty"]
-            ).estimates
-            
-            self.estimates["coefficients"][np.hstack((True, mask))] += posterior * estimates["coefficients"]
-            self.estimates["res_precision"] += posterior * estimates["res_precision"]
 
 
     def _get_prior_prob(self, k, n):
@@ -325,7 +290,7 @@ class LinearMC3(core.MC3, LinearEnumerator):
         prediction matrix
     y : np.ndarray
         response vector
-    posteriors: Counter
+    posterior: Counter
         posterior distribution over the model space where
         str(model) is the key and the posterior probability is the value
     estimates: dict
