@@ -1,18 +1,22 @@
 """
-Provides routines for Bayesian model averaging. You can adapt these to your model by providing its marginal likelihood function and its prior probability function.
+Provides routines for Bayesian model averaging. They compute the posterior distribution
+    Pr[M|D] = p[D|M] * p[M] / p[D]
+    where M is a member of some model space (e.g. linear regression models) and D is the observed data.
 
-The routines compute the posterior distribution Pr[M|y]. This is accomplished either by computing the posterior probability of all possible models, or by sampling from the posterior distribution using MCMC methods.
+You may compute Pr[M|D] directly by finding the posterior probability of all possible models. You may also approximate it through MCMC simulation for better scaling.
+
+You can adapt the routines to any model space by providing its marginal likelihood p[D|M] and its prior probability measure p[M].
 
 References
 ----------
-See Kass and Wassermann (1995) and Kass and Raftery (1995) for bayesian model averaging and MC3
+See Kass and Wassermann (1995) and Kass and Raftery (1995) for bayesian model averaging and MC3.
 """
 
 import numpy as np
-from itertools import product
+import mcmc
 from collections import Counter
+from itertools import product
 from scipy.special import binom
-from diagnostics import MC2Diagnostics
 
 
 
@@ -44,18 +48,29 @@ def log_sum_exp(sequence):
 
     return offset + np.log(np.sum(np.e ** (sequence - offset)))
 
+    
 
+class InputError(Exception):
+
+    def __init__(self, expr, msg):
+        self.expr = expr
+        self.msg = msg
+        
+    def __str__(self):
+        return str(self.expr) + ": " + str(self.msg)
+
+    
 
 class Enumerator(object):
-    """Computes the posterior probability distribution over a model space defined by a marginal likelihood and a prior.
+    """Generic model averaging routine.
 
-    This method computes 2^d posteriors, where d is the number of predictors. Use MC3 for larger d.
+    Computes the posterior distribution over the model space. Full enumeration requires the computation of 2^ndim posteriors. Thus, the method does not scale well beyond 15 dimensions.
 
     Parameters
     ----------
-    X : np.ndarray (nobs x ndim)
+    X : np.ndarray in R^(nobs x ndim)
         predictor matrix
-    y : np.ndarray (nobs x 1)
+    y : np.ndarray in R^nobs
         response vector
     likelihood_func : func
         function that returns the log marginal likelihood of a given model
@@ -82,8 +97,33 @@ class Enumerator(object):
         self.X = X
         self.y = y
         self.nobs, self.ndim = X.shape
-
-        self._select()
+        
+        self._get_likelihood = likelihood_func
+        self._get_prior_prob = prior_func
+        
+    
+    def select(self):
+        """Compute the posterior probability distribution by enumerating all 2^ndim models.
+        """
+        
+        models = np.array(list(product((0, 1), repeat = self.ndim)))
+        
+        # compute model probabilities
+        priors = np.array([
+            np.log(self._get_prior_prob(np.sum(model), self.ndim))
+            for model in models
+        ])
+        likelihoods = np.array([
+            self._get_likelihood(model)
+            for model in models
+        ])
+        posteriors = np.e ** (priors + likelihoods - log_sum_exp(priors + likelihoods))
+        
+        # summarize
+        self.posteriors = Counter({
+            str(models[i]):posteriors[i]
+            for i in range(len(models))
+        })
 
 
     def test_single_coefficients(self):
@@ -92,7 +132,7 @@ class Enumerator(object):
         Returns
         -------
         np.ndarray
-            (ndim x 1) vector of individual inclusion probabilities
+            vector of individual inclusion probabilities
         """
 
         weighted_models = np.array([
@@ -108,7 +148,7 @@ class Enumerator(object):
         
         Parameters
         ----------
-        indices : array_like
+        indices : array_like in {0, .., ndim - 1}
             indices of variables in X to be included in the test
 
         Returns
@@ -124,7 +164,7 @@ class Enumerator(object):
         )
 
 
-    def model_size_distribution(self):
+    def get_model_size_dist(self):
         """Evaluate the posterior model size distribution.
         
         Returns
@@ -140,53 +180,24 @@ class Enumerator(object):
 
         return posterior
         
-    
-    def _select(self):
-        """Compute the posterior probability distribution
-        by enumerating all (2^d) models.
-        """
-        
-        models = np.array(list(product((0, 1), repeat = self.ndim)))
-        
-        # compute model probabilities
-        priors = np.array([
-            np.log(self.prior_func(np.sum(model), self.ndim))
-            for model in models
-        ])
-        likelihoods = np.array([
-            self.likelihood_func(self.X[:, model == 1], self.y)
-            for model in models
-        ])
-        posteriors = np.e ** (priors + likelihoods - log_sum_exp(priors + likelihoods))
-        
-        # summarize
-        self.posteriors = Counter({
-            str(models[i]):posteriors[i]
-            for i in range(len(models))
-        })
-        
         
 
-class MC3(Enumerator):
-    """Computes the posterior probability distribution over a model space defined by a marginal likelihood and a prior.
-    
-    Suitable for high-dimensional models.
+class MC3(Enumerator, mcmc.MetropolisSampler):
+    """Generic model averaging routine based on the Metropolis-Hastings algorithm.
+
+    Approximates the posterior distribution over the model space. Scales well to high dimensions.
 
     Parameters
     ----------
-    X : np.ndarray (nobs x ndim)
+    X : np.ndarray in R^(nobs x ndim)
         predictor matrix
-    y : np.ndarray (nobs x 1)
+    y : np.ndarray in R^nobs
         response vector
     likelihood_func : func
         function that returns the log marginal likelihood of a given model
     prior_func : func
         function that returns the prior probability of a given model
-    niter : int {1, .., inf}
-        number of draws from the distribution
-    proposal : str {"random", "prior"}
-        strategy that determines MCMC proposal probabilities
-
+    
     Attributes
     ----------
     nobs : int
@@ -200,188 +211,136 @@ class MC3(Enumerator):
     posteriors: Counter
         posterior distribution over the model space where
         str(model) is the key and the posterior probability is the value
-    par : dict
-        MCMC parameters including "niter", "proposal"
-    diagnostics : dict
-        MCMC diagnostics per coefficient including
-        "ess" (effective sample size)
-        "ndiscard" (pre-equilibrium samples),
-        "stderr" (standard error)
     """
     
-    def __init__(self, X, y, likelihood_func, prior_func, niter, proposal):
-        
-        self.par = {
-            "niter": int(niter),
-            "proposal": proposal == "random" and self._random_update or self._prior_update
-        }
-        self.X = X
-        self.y = y
-        self.nobs, self.ndim = X.shape
-
-        self._select()
-        
-    
-    def _select(self):
+    def select(self, niter=10000, method="random"):
         """Estimate the posterior probability distribution through MCMC simulation.
+
+        Parameters
+        ----------
+        niter : int {1, .., inf}
+            number of draws from the distribution
+        proposal : str {"random", "prior"}
+            strategy that determines MCMC proposal probabilities
         """
 
-        draws = np.empty((self.par["niter"], self.ndim), dtype=bool)
-
-        # pick initial model at random
-        self.state = self.par["proposal"](np.zeros(self.ndim))
-        
-        # sample
-        for i in range(self.par["niter"]):
-            self._jump()
-            draws[i,:] = self.state["model"]
-
-        # ditch pre-equilibrium samples
-        self.diagnostics = MC2Diagnostics(draws).summarize()
-        self.draws = draws
-        draws = draws[np.max(self.diagnostics["ndiscard"]):,:]
+        # execute mcmc search
+        self.method = method
+        self._run(np.zeros(self.ndim), niter)
 
         # summarize
         counts = Counter()
-        for i in range(draws.shape[0]):
-            counts[str(np.array(draws[i,:], dtype=int)).replace("\n", "")] += 1
+        for i in range(self.draws.shape[0]):
+            counts[str(np.array(self.draws[i,:], dtype=int)).replace("\n", "")] += 1
             
         self.posteriors = Counter({
             key:(counts[key] / sum(counts.values()))
             for key in counts
         })
-    
-        
-    def _jump(self):
-        """Attempt a state change in the markov chain.
+
+
+    def _get_rv_prob(self, model):
+        """Compute the posterior probability (up to the normalizing constant) of a given model.
+
+        Parameters
+        ----------
+        model : np.ndarray in {0, 1}^ndim
+            vector of variable inclusion indicators
+
+        Returns
+        -------
+        float
+            log posterior probability
         """
+
+        prior = np.log(self._get_prior_prob(np.sum(model), self.ndim))
+        likelihood = self._get_likelihood(model)
+        
+        return likelihood + prior
+
+
+    def _propose(self, state):
+        """Draw a candidate from the proposal distrubtion.
+        
+        Parameters
+        ----------
+        state : np.ndarray in {0, 1}^ndim
+            current MC state
+
+        Returns
+        -------
+        np.ndarray
+            candidate vector of variable inclusion indicators
+        """
+
+        if self.method == "prior":
+            prob_dplus = binom(
+                len(state),
+                np.sum(state) + 1
+            ) * self._get_prior_prob(
+                np.sum(state) + 1,
+                len(state)
+            )
+            prob_dminus = binom(
+                len(state),
+                np.sum(state) - 1
+            ) * self._get_prior_prob(
+                np.sum(state) - 1,
+                len(state)
+            )
+            growth_prob = prob_dplus / (prob_dplus + prob_dminus)
+        else:
+            growth_prob = 1 - np.sum(state) / len(state)
 
         # decide on an action
-        add = np.random.binomial(1, self.state["growth"])
+        add = np.random.binomial(1, growth_prob)
 
         # pick entering/leaving variable
-        pick = np.random.choice(np.arange(self.ndim)[self.state["model"] != add])
+        pick = np.random.choice(np.arange(len(state))[state != add])
+        candidate = np.copy(state)
+        candidate[pick] = not candidate[pick]
 
-        # profile new model
-        model = np.copy(self.state["model"])
-        model[pick] = not model[pick]
-        candidate = self.par["proposal"](model)
+        return candidate
 
-        # proposal
-        bayes_factor = candidate["lik"] - self.state["lik"]
-        prior_odds = candidate["prior"] - self.state["prior"]
-        posterior_odds = bayes_factor + prior_odds
+
+    def _get_proposal_prob(self, proposal, state):
+        """Compute the probability of proposing "proposal" given "state".
         
-        if np.sum(self.state["model"]) < np.sum(candidate["model"]):
-            forward_proposal = self.state["growth"] / (self.ndim - np.sum(self.state["model"]))
-            backward_proposal = (1 - candidate["growth"]) / np.sum(candidate["model"])
+        Parameters
+        ----------
+        proposal : np.ndarray in {0, 1}^ndim
+            candidate MC state
+        state : np.ndarray in {0, 1}^ndim
+            current MC state
+
+        Returns
+        -------
+        float
+            probability of proposal
+        """
+        
+        if self.method == "prior":
+            prob_dplus = binom(
+                len(state),
+                np.sum(state) + 1
+            ) * self._get_prior_prob(
+                np.sum(state) + 1,
+                len(state)
+            )
+            prob_dminus = binom(
+                len(state),
+                np.sum(state) - 1
+            ) * self._get_prior_prob(
+                np.sum(state) - 1,
+                len(state)
+            )
+            growth_prob = prob_dplus / (prob_dplus + prob_dminus)
         else:
-            forward_proposal = (1 - self.state["growth"]) / np.sum(self.state["model"])
-            backward_proposal = candidate["growth"] / (self.ndim - np.sum(candidate["model"]))
+            growth_prob = 1 - np.sum(state) / len(state)
 
-        proposal_odds = np.log(backward_proposal) - np.log(forward_proposal)
-
-        if posterior_odds + proposal_odds - np.log(np.random.uniform()) > 0:
-            self.state = candidate
-
-
-    def _random_update(self, model):
-        """Compute the properties of the current state of the markov chain, using a random proposal rule.
-
-        Parameters
-        ----------
-        model : array_like (ndim x 1)
-            vector of 0 and 1 indicating whether a variable is included
-
-        Returns
-        -------
-        dict
-            includes the needed information to evaluate state changes
-            "model" (current variable indicators)
-            "growth" (the growth probability)
-            "prior" (the model's log prior probability)
-            "lik" (the model's log marginal likelihood)
-        """
-        
-        return {
-            "model": np.array(model, dtype=bool),
-            "growth": 1 - np.sum(model) / self.ndim,
-            "prior": np.log(self.prior_func(np.sum(model), self.ndim)),
-            "lik": self.likelihood_func(self.X[:, model == 1], self.y)
-        }
-
-
-    def _prior_update(self, model):
-        """Compute the properties of the current state of the markov chain.
-
-        Parameters
-        ----------
-        model : array_like (ndim x 1)
-            vector of 0 and 1 indicating whether a variable is included
-
-        Returns
-        -------
-        dict
-            includes the needed information to evaluate state changes
-            "model" (current variable indicators)
-            "growth" (the growth probability)
-            "prior" (the model's log prior probability)
-            "lik" (the model's log marginal likelihood)
-        """
-        
-        prob_dplus = binom(self.ndim, np.sum(model) + 1) * self.prior_func(
-            np.sum(model) + 1,
-            self.ndim
-        )
-        prob_dminus = binom(self.ndim, np.sum(model) - 1) * self.prior_func(
-            np.sum(model) - 1,
-            self.ndim
-        )
-        return {
-            "model": np.array(model, dtype=bool),
-            "growth": prob_dplus / (prob_dplus + prob_dminus),
-            "prior": np.log(self.prior_func(np.sum(model), self.ndim)),
-            "lik": self.likelihood_func(self.X[:, model == 1], self.y)
-        }
-    
-
-    def _condn_update(self, model, magicn=22):
-        """Compute the properties of the current state of the markov chain, using a condition-number proposal rule.
-
-        Parameters
-        ----------
-        model : array_like (ndim x 1)
-            vector of 0 and 1 indicating whether a variable is included
-
-        Returns
-        -------
-        dict
-            includes the needed information to evaluate state changes
-            "model" (current variable indicators)
-            "growth" (the growth probability)
-            "prior" (the model's log prior probability)
-            "lik" (the model's log marginal likelihood)
-        """
-
-        X = self.X[:,model == 1]
-        if np.sum(model) < 2:
-            cond_nr = 1
+        if np.sum(state) < np.sum(proposal):
+            forward_prob = growth_prob / (len(state) - np.sum(state))
         else:
-            cond_nr = np.linalg.cond(np.dot(X.T, X))
-        return {
-            "model": np.array(model, dtype=bool),
-            "growth": (2 / (1 + np.e ** (cond_nr / magicn))) ** (np.all(model) and np.inf or 1) ** (not np.all(np.logical_not(model))),
-            "prior": np.log(self.prior_func(np.sum(model), self.ndim)),
-            "lik": self.likelihood_func(self.X[:, model == 1], self.y)
-        }
+            forward_prob = (1 - growth_prob) / np.sum(state)
 
-
-
-class InputError(Exception):
-
-    def __init__(self, expr, msg):
-        self.expr = expr
-        self.msg = msg
-        
-    def __str__(self):
-        return str(self.expr) + ": " + str(self.msg)
+        return np.log(forward_prob)

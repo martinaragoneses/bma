@@ -1,11 +1,11 @@
 """
-Contains utilities that implement the simulation design and generate the figures.
+Contains utilities that implement the simulation design.
 """
 
 import numpy as np
 import matplotlib.pyplot as plt
-import selection
-import diagnostics
+import linear_averaging
+from scipy.special import binom
 
 plt.style.use("ggplot")
 plt.rcParams.update({'font.size': 16})
@@ -86,137 +86,9 @@ def replicate_trial(trial, n):
 
 
 
-# fig 1
-x = range(0, 31)
-q_std = [1 - np.sum(i) / 30 for i in y]
-
-plt.xlabel("$d_{\gamma}$")
-plt.ylabel("$\pi (d_{\gamma} + 1 | d_{\gamma})$")
-plt.plot(x, q_std, color="#377eb8")
-for p in (1/4, 1/2, 3/4):
-    q_new = [
-        selection.binom_pmf(i + 1, 30, p) / (selection.binom_pmf(i + 1, 30, p) + selection.binom_pmf(i - 1, 30, p))
-        for i in y
-    ]
-    plt.plot(x, q_new, color="#e41a1c")
-plt.show()
-
-    
-# fig2a
 np.random.seed(2015)
 X, y = simulate_data_d15(100)
-
-np.random.seed(2015)
-sampler1 = selection.LinearMC3(X, y, proposal="random", penalty_par=30**2, incl_par=1/3, niter=100000)
-diags1 = diagnostics.MC2Diagnostics(sampler1.draws)
-
-plt.xlabel("$t$")
-plt.ylabel("$\kappa (t)$")
-for acf in diags1.acfs[:10]:
-    plt.plot(range(1, len(acf) + 1), acf, color="#377eb8", alpha=0.5)
-for acf in diags1.acfs[10:]:
-    plt.plot(range(1, len(acf) + 1), acf, color="#e41a1c", alpha=0.5)
-plt.show()
-
-
-# fig2b
-np.random.seed(2015)
-X, y = simulate_data_d15(100)
-
-np.random.seed(2015)
-sampler2 = selection.LinearMC3(X, y, proposal="prior", penalty_par=30**2, incl_par=1/3, niter=100000)
-diags2 = diagnostics.MC2Diagnostics(sampler2.draws)
-
-plt.xlabel("$t$")
-plt.ylabel("")
-for acf in diags2.acfs[:10]:
-    plt.plot(range(1, len(acf) + 1), acf, color="#377eb8", alpha=0.5)
-for acf in diags2.acfs[10:]:
-    plt.plot(range(1, len(acf) + 1), acf, color="#e41a1c", alpha=0.5)
-plt.show()
-
-
-# fig3a
-np.random.seed(2015)
-X, y = simulate_data_d30(100)
-
-np.random.seed(2015)
-ess_array3 = replicate_trial(
-    lambda: selection.LinearMC3(X, y, proposal="random", penalty_par=30**2, incl_par=1/3, niter=20000).diagnostics["ess"],
-    10
-)
-
-plt.ylim(0, 2000)
-plt.xlabel("$\gamma_i$")
-plt.ylabel("ESS")
-fig3 = plt.boxplot(ess_array3)
-plt.xticks(range(5, 31, 5), range(5, 31, 5))
-plt.setp(fig3['boxes'], color='#444444')
-plt.setp(fig3['whiskers'], color='#444444')
-plt.setp(fig3['fliers'], color='#e41a1c', marker='+')
-plt.show()
-
-
-# fig3b
-np.random.seed(2015)
-X, y = simulate_data_d30(100)
-
-np.random.seed(2015)
-ess_array4 = replicate_trial(
-    lambda: selection.LinearMC3(X, y, proposal="prior", penalty_par=30**2, incl_par=1/3, niter=20000).diagnostics["ess"],
-    10
-)
-
-plt.ylim(0, 2000)
-plt.xlabel("$\gamma_i$")
-plt.ylabel("")
-fig4 = plt.boxplot(ess_array4)
-plt.xticks(range(5, 31, 5), range(5, 31, 5))
-plt.setp(fig4['boxes'], color='#444444')
-plt.setp(fig4['whiskers'], color='#444444')
-plt.setp(fig4['fliers'], color='#e41a1c', marker='+')
-plt.show()
-
-
-# fig4a
-np.random.seed(2015)
-X, y = simulate_data_d30(100)
-
-np.random.seed(2015)
-sampler5 = selection.LinearMC3(X, y, proposal="random", penalty_par=30**2, incl_par=1/3, niter=20000)
-
-plt.xlabel("$\gamma_i$")
-plt.ylabel("$\pi (\gamma_i | \mathbf{y})$")
-plt.ylim(0, 1)
-plt.errorbar(
-    range(1, 31),
-    sampler5.test_single_coefficients(),
-    fmt="o",
-    color="#444444",
-    alpha=0.5,
-    yerr=1.96*sampler5.diagnostics["stderr"],
-    ecolor="#e41a1c"
-)
-plt.show()
-
-
-# fig4b
-np.random.seed(2015)
-X, y = simulate_data_d30(100)
-
-np.random.seed(2015)
-sampler6 = selection.LinearMC3(X, y, proposal="prior", penalty_par=30**2, incl_par=1/3, niter=20000)
-
-plt.xlabel("$\gamma_i$")
-plt.ylabel("")
-plt.ylim(0, 1)
-plt.errorbar(
-    range(1, 31),
-    sampler6.test_single_coefficients(),
-    fmt="o",
-    color="#444444",
-    alpha=0.5,
-    yerr=1.96*sampler6.diagnostics["stderr"],
-    ecolor="#e41a1c"
-)
-plt.show()
+model1 = linear_averaging.LinearMC3(X, y, 15**2, 1/3)
+model1.select(10000, "random")
+model2 = linear_averaging.LinearEnumerator(X, y, 15**2, 1/3)
+model2.select()

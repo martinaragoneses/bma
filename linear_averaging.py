@@ -7,6 +7,8 @@ The full probability model is given by
     p[y, a, b, q, M] = p[y | a, b, q, M] * p[b | q, M] * p[a, q] * p[M]
     where M is the model/hypothesis and q is the residual precision
 
+You may compute Pr[M|y] directly by finding the posterior probability of all possible models. You may also approximate it through MCMC simulation for better scaling.
+
 References
 ----------
 See Liang et al. (2008) for the specific probability model and its properties
@@ -35,68 +37,6 @@ def log_gamma(x):
     return np.sum(np.log(np.arange(1, x)))
     
 
-def binom_prior_pmf(k, n, p):
-    """Compute the prior probability of a model with k variables.
-
-    Parameters
-    ----------
-    k : int {1, ..., n}
-        number of variables in the model
-    n : int {1, ..., inf}
-        total number of predictors
-    p : float [0, 1]
-        prior inclusion probability of individual variables
-
-    Returns
-    -------
-    float
-        prior probability
-    """
-    
-    if k < 0 or n < k:
-        return 0
-    return p ** k * (1 - p) ** (n - k)
-
-
-def marginal_likelihood(X, y, g):
-    """Compute the marginal likelihood of the linear model with a g-prior on betas.
-
-    Parameters
-    ----------
-    X : np.ndarray (nobs x ndim)
-        regressor matrix
-    y : np.ndarray
-        response vector
-    g : dimensionality penalty
-
-    Returns
-    -------
-    float
-        natural logarithm of the model's marginal likelihood
-    """
-
-    nobs, ndim = X.shape
-    
-    if len(X.shape) == 0:
-        design = np.ones((nobs, 1))
-    elif len(X.shape) == 1:
-        X.shape = (nobs, 1)
-        design = np.hstack((np.ones((nobs, 1)), X))
-    else:
-        design = np.hstack((np.ones((nobs, 1)), X))
-    
-    mle = np.linalg.solve(np.dot(design.T, design), np.dot(design.T, y))
-    residuals = y - np.dot(design, mle)
-    rsquared = 1 - np.var(residuals) / np.var(y)
-    
-    return (log_gamma((nobs - 1) / 2)
-        - (nobs - 1) / 2 * np.log(np.pi)
-        - 0.5 * np.log(nobs)
-        - (nobs - 1) / 2 * np.log(np.dot(residuals, residuals))
-        + (nobs - ndim - 1) / 2 * np.log(1 + g)
-        - (nobs - 1) / 2 * np.log(1 + g * (1 - rsquared)))
-
-
 
 class LinearEnumerator(core.Enumerator):
     """Computes the posterior probability distribution over the space of linear regression models.
@@ -105,9 +45,9 @@ class LinearEnumerator(core.Enumerator):
     
     Parameters
     ----------
-    X : np.ndarray (nobs x ndim)
-        prediction matrix
-    y : np.ndarray (nobs x 1)
+    X : np.ndarray in R^(nobs x ndim)
+        predictor matrix
+    y : np.ndarray in R^nobs
         response vector
     penalty_par : float (0, inf)
         dimensionality penalty ("g")
@@ -135,22 +75,18 @@ class LinearEnumerator(core.Enumerator):
 
     def __init__(self, X, y, penalty_par, incl_par):
 
+        self.nobs, self.ndim = X.shape
         self.X = X
         self.y = y
-        self.nobs, self.ndim = X.shape
-        self.likelihood_func = lambda X, y: marginal_likelihood(X, y, penalty_par)
-        self.prior_func = lambda k, n: binom_prior_pmf(k, n, incl_par)
-
-        self._select()
-        self._estimate(penalty_par)
-
+        self.par = {"penalty": penalty_par, "incl": incl_par}
+        
 
     def predict(self, X_new):
         """Give point predictions for a new set of observations.
 
         Parameters
         ----------
-        X_new : np.ndarray
+        X_new : np.ndarray in R^(nobs x ndim)
             prediction matrix
 
         Returns
@@ -159,11 +95,7 @@ class LinearEnumerator(core.Enumerator):
             vector of point estimates
         """
 
-        if X_new.shape[0] == self.X.shape[1]:
-            design = np.hstack((np.ones((1, 1)), X_new[np.newaxis]))
-        else:
-            design = np.hstack((np.ones((X_new.shape[0], 1)), X_new))
-            
+        design = np.hstack((np.ones((X_new.shape[0], 1)), X_new))
         return np.dot(design, self.estimates["coefficients"])
 
 
@@ -172,7 +104,7 @@ class LinearEnumerator(core.Enumerator):
 
         Parameters
         ----------
-        ndraws : int, default 1000
+        ndraws : int {1, .., inf}, default 1000
             number of draws
 
         Retrurns
@@ -181,7 +113,6 @@ class LinearEnumerator(core.Enumerator):
             vector of draws
         """
 
-        g = max(self.X.shape[0], self.X.shape[1] ** 2)
         model_draws = np.random.multinomial(
             ndraws,
             list(self.posteriors.values())
@@ -201,7 +132,7 @@ class LinearEnumerator(core.Enumerator):
             draws += list(linear_regression.LinearModel(
                 self.X[:, mask],
                 self.y,
-                g
+                self.par["penalty"]
             ).residual_dist(model_draws[i]))
 
         return draws
@@ -212,16 +143,15 @@ class LinearEnumerator(core.Enumerator):
 
         Parameters
         ----------
-        ndraws : int, default 1000
+        ndraws : int {1, .., inf}, default 1000
             number of draws
 
         Retrurns
         --------
         np.ndarray
-            vector of draws
+            matrix of draws
         """
 
-        g = max(self.X.shape[0], self.X.shape[1] ** 2)
         model_draws = np.random.multinomial(
             ndraws,
             list(self.posteriors.values())
@@ -241,7 +171,7 @@ class LinearEnumerator(core.Enumerator):
             draws += list(linear_regression.LinearModel(
                 self.X[:, mask],
                 self.y,
-                g
+                self.par["penalty"]
             ).coef_dist(model_draws[i]))
 
         return draws
@@ -252,9 +182,9 @@ class LinearEnumerator(core.Enumerator):
 
         Parameters
         ----------
-        x_new : np.ndarray
+        x_new : np.ndarray in R^ndim
             prediction vector
-        ndraws : int, default 1000
+        ndraws : int {1, .., inf}, default 1000
             number of draws
 
         Retrurns
@@ -263,7 +193,6 @@ class LinearEnumerator(core.Enumerator):
             vector of draws
         """
 
-        g = max(self.X.shape[0], self.X.shape[1] ** 2)
         model_draws = np.random.multinomial(
             ndraws,
             list(self.posteriors.values())
@@ -283,13 +212,13 @@ class LinearEnumerator(core.Enumerator):
             draws += list(linear_regression.LinearModel(
                 self.X[:, mask],
                 self.y,
-                g
+                self.par["penalty"]
             ).predictive_dist(x_new[mask], model_draws[i]))
 
         return draws
         
 
-    def _estimate(self, penalty_par):
+    def _estimate(self):
         """Compute point estimates of the model parameters.
 
         Parameters
@@ -309,13 +238,65 @@ class LinearEnumerator(core.Enumerator):
             estimates = linear_regression.LinearModel(
                 self.X[:, mask],
                 self.y,
-                penalty_par
+                self.par["penalty"]
             ).estimates
             
             self.estimates["coefficients"][np.hstack((True, mask))] += posterior * estimates["coefficients"]
             self.estimates["res_precision"] += posterior * estimates["res_precision"]
 
-            
+
+    def _get_prior_prob(self, k, n):
+        """Compute the prior probability of a model with k variables.
+
+        Parameters
+        ----------
+        k : int {1, ..., n}
+            number of variables in the model
+        n : int {1, ..., inf}
+            total number of predictors
+
+        Returns
+        -------
+        float
+            prior probability
+        """
+
+        if k < 0 or n < k:
+            return 0
+        return self.par["incl"] ** k * (1 - self.par["incl"]) ** (n - k)
+
+
+    def _get_likelihood(self, model):
+        """Compute the marginal likelihood of the linear model with a g-prior on betas.
+
+        Parameters
+        ----------
+        model : np.ndarray in R^ndim
+            vector of variable inclusion indicators
+
+        Returns
+        -------
+        float
+            log marginal likelihood
+        """
+
+        X = self.X[:, model == 1]
+        y = self.y
+        nobs, ndim = X.shape
+        design = np.hstack((np.ones((nobs, 1)), X))
+
+        mle = np.linalg.solve(np.dot(design.T, design), np.dot(design.T, y))
+        residuals = y - np.dot(design, mle)
+        rsquared = 1 - np.var(residuals) / np.var(y)
+
+        return (log_gamma((nobs - 1) / 2)
+            - (nobs - 1) / 2 * np.log(np.pi)
+            - 0.5 * np.log(nobs)
+            - (nobs - 1) / 2 * np.log(np.dot(residuals, residuals))
+            + (nobs - ndim - 1) / 2 * np.log(1 + self.par["penalty"])
+            - (nobs - 1) / 2 * np.log(1 + self.par["penalty"] * (1 - rsquared)))
+
+
 
 class LinearMC3(core.MC3, LinearEnumerator):
     """Computes the posterior probability distribution over the space of linear regression models.
@@ -324,19 +305,15 @@ class LinearMC3(core.MC3, LinearEnumerator):
     
     Parameters
     ----------
-    X : np.ndarray (nobs x ndim)
-        prediction matrix
-    y : np.ndarray (nobs x 1)
+    X : np.ndarray in R^(nobs x ndim)
+        predictor matrix
+    y : np.ndarray in R^nobs
         response vector
     penalty_par : float (0, inf)
         dimensionality penalty ("g")
     incl_par : float (0, 1)
         prior inclusion probability ("p")
         the default implies a uniform prior over the model space
-    niter : int {1, .., inf}, default 10000
-        number of draws from the distribution
-    proposal : str {"random", "prior"}, default "random"
-        strategy that determines MCMC proposal probabilities
     
     Attributes
     ----------
@@ -354,38 +331,9 @@ class LinearMC3(core.MC3, LinearEnumerator):
     estimates: dict
         point estimates of the model parameters including
         "coefficients" and "res_precision"
-    par : dict
-        MCMC parameters including "niter", "proposal"
-    diagnostics : dict
-        MCMC diagnostics per coefficient including
-        "ess" (effective sample size)
-        "ndiscard" (pre-equilibrium samples),
-        "stderr" (standard error)
     """
 
-    def __init__(self, X, y, penalty_par, incl_par, niter=100000, proposal="random"):
-
-        if int(niter) < 1:  
-            raise InputError(
-                core.incl_par,
-                "incl_par is restricted to {1, .., inf}."
-            )
-        if not proposal in ("random", "prior"):
-            raise InputError(
-                core.proposal,
-                "proposal is restricted to {'random', 'prior'}."
-            )
+    def __init__(self, X, y, penalty_par, incl_par):
         
-        self.par = {
-            "niter": int(niter),
-            "proposal": proposal == "random" and self._random_update or self._prior_update
-        }
-        
-        self.X = X
-        self.y = y
-        self.nobs, self.ndim = X.shape
-        self.likelihood_func = lambda X, y: linear_likelihood(X, y, penalty_par)
-        self.prior_func = lambda k, n: binom_prior_pmf(k, n, incl_par)
-
-        self._select()
-        self._estimate()
+        # wrap parent constructor
+        LinearEnumerator.__init__(self, X, y, penalty_par, incl_par)

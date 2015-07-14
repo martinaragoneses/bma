@@ -18,9 +18,9 @@ def draw_student(loc, scale, df, ndraws):
 
     Parameters
     ----------
-    loc : np.ndarray
+    loc : np.ndarray in R^ndim
         vector of means
-    scale : np.ndarray
+    scale : np.ndarray in R^(ndim x ndim)
         positive definite scale matrix
     df : int {1, .., inf}
         degrees of freedom
@@ -95,11 +95,11 @@ def integrate(draws, lo, hi):
 
     Parameters
     ----------
-    draws : np.ndarray
+    draws : np.ndarray in R^nobs or R^(ndim x nobs)
         vector or matrix of draws from a random variable or vector
-    lo : float
+    lo : float or np.ndarray in R^ndim
         lower bound of the integral
-    hi : float
+    hi : float or np.ndarray in R^ndim
         upper bound of the integral
 
     Returns
@@ -118,7 +118,7 @@ def get_prediction_interval(draws, alpha=0.05):
 
     Parameters
     ----------
-    draws : np.ndarray
+    draws : np.ndarray in R^nobs or R^(ndim x nobs)
         vector or matrix of draws from a random variable or vector
     alpha : float (0, 1)
         error probability
@@ -149,9 +149,9 @@ class LinearModel(object):
     
     Parameters
     ----------
-    X : np.ndarray (nobs x ndim)
-        prediction matrix
-    y : np.ndarray (nobs x 1)
+    X : np.ndarray in R^(nobs x ndim)
+        predictor matrix
+    y : np.ndarray in R^nobs
         response vector
     penalty_par : float (0, inf)
         dimensionality penalty ("g")
@@ -167,7 +167,7 @@ class LinearModel(object):
     y : np.ndarray
         response vector
     posteriors: dict
-        posterior distribution parameters over the model parameters including
+        posterior distribution over the model parameters including
         "shape", "rate", "location", "precision"
     estimates: dict
         point estimate of the model parameters including
@@ -176,8 +176,9 @@ class LinearModel(object):
 
     
     def __init__(self, X, y, penalty_par):
-        
+
         self.nobs, self.ndim = X.shape
+            
         self.X = X
         self.y = y
         self.penalty_par = penalty_par
@@ -190,7 +191,7 @@ class LinearModel(object):
 
         Parameters
         ----------
-        X_new : np.ndarray
+        X_new : np.ndarray in R^(nobs x ndim)
             prediction matrix
 
         Returns
@@ -199,10 +200,7 @@ class LinearModel(object):
             vector of point estimates
         """
 
-        if X_new.shape[0] == self.X.shape[1]:
-            design = np.hstack((np.ones((1, 1)), X_new[np.newaxis]))
-        else:
-            design = np.hstack((np.ones((X_new.shape[0], 1)), X_new))
+        design = np.hstack((np.ones((X_new.shape[0], 1)), X_new))
             
         return np.dot(design, self.estimates["coefficients"])
 
@@ -212,7 +210,7 @@ class LinearModel(object):
 
         Parameters
         ----------
-        ndraws : int, default 1000
+        ndraws : int {1, .., inf}, default 1000
             number of draws
 
         Retrurns
@@ -233,13 +231,13 @@ class LinearModel(object):
 
         Parameters
         ----------
-        ndraws : int, default 1000
+        ndraws : int {1, .., inf}, default 1000
             number of draws
 
         Retrurns
         --------
         np.ndarray
-            vector of draws
+            matrix of draws
         """
 
         return draw_normal_gamma(self.posterior, ndraws)["normal"]
@@ -250,9 +248,9 @@ class LinearModel(object):
 
         Parameters
         ----------
-        x_new : np.ndarray
+        x_new : np.ndarray in R^ndim
             prediction vector
-        ndraws : int, default 1000
+        ndraws : int {1, .., inf}, default 1000
             number of draws
 
         Retrurns
@@ -271,14 +269,7 @@ class LinearModel(object):
         """Compute the parameters of the posterior distribution.
         """
 
-        if len(self.X.shape) == 0:
-            design = np.ones((self.nobs, 1))
-        elif len(self.X.shape) == 1:
-            self.X.shape = (self.nobs, 1)
-            design = np.hstack((np.ones((self.nobs, 1)), self.X))
-        else:
-            design = np.hstack((np.ones((self.nobs, 1)), self.X))
-        
+        design = np.hstack((np.ones((self.nobs, 1)), self.X))
         sub_quadrant = (1 + 1 / self.nobs / self.penalty_par) * np.dot(self.X.T, self.X)
         
         precision = np.vstack((
