@@ -91,8 +91,7 @@ class LinearEnumerator(core.Enumerator):
         }
         
         for model, weight in self.posterior.items():
-            
-            mask = np.fromstring(model[1:-1], dtype=bool, sep=" ")
+            mask = np.array(model) == 1
             model = linear_regression.LinearModel(
                 self.X[:, mask],
                 self.y,
@@ -142,25 +141,22 @@ class LinearEnumerator(core.Enumerator):
         )
 
         draws = np.empty(0)
-        for i, ndraws in enumerate(model_draws):
+        for i, model in enumerate(self.posterior.keys()):
             
-            if ndraws == 0:
+            if model_draws[i] == 0:
                 continue
             
-            mask = np.fromstring(
-                list(self.posterior.keys())[i][1:-1],
-                dtype=bool,
-                sep=" "
-            )
-            
-            model = linear_regression.LinearModel(
-                self.X[:, mask],
+            subm = linear_regression.LinearModel(
+                self.X[:, np.array(model) == 1],
                 self.y,
                 self.par["penalty"]
             )
-            model.estimate()
+            subm.estimate()
             
-            draws = np.append(draws, model.residual_dist(ndraws))
+            draws = np.append(
+                draws,
+                subm.residual_dist(model_draws[i])
+            )
 
         return draws
     
@@ -187,25 +183,22 @@ class LinearEnumerator(core.Enumerator):
         )
 
         draws = np.empty(0)
-        for i, ndraws in enumerate(model_draws):
+        for i, model in enumerate(self.posterior.keys()):
             
-            if ndraws == 0:
+            if model_draws[i] == 0:
                 continue
             
-            mask = np.fromstring(
-                list(self.posterior.keys())[i][1:-1],
-                dtype=bool,
-                sep=" "
-            )
-            
-            model = linear_regression.LinearModel(
-                self.X[:, mask],
+            subm = linear_regression.LinearModel(
+                self.X[:, np.array(model) == 1],
                 self.y,
                 self.par["penalty"]
             )
-            model.estimate()
+            subm.estimate()
             
-            draws = np.append(draws, model.predictive_dist(x_new[mask], ndraws))
+            draws = np.append(draws, subm.predictive_dist(
+                x_new[np.array(model) == 1],
+                model_draws[i]
+            ))
 
         return draws
 

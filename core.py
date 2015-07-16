@@ -48,18 +48,18 @@ def log_sum_exp(sequence):
 
     return offset + np.log(np.sum(np.e ** (sequence - offset)))
 
-    
+
 
 class InputError(Exception):
 
     def __init__(self, expr, msg):
         self.expr = expr
         self.msg = msg
-        
+
     def __str__(self):
         return str(self.expr) + ": " + str(self.msg)
 
-    
+
 
 class Enumerator(object):
     """Generic model averaging routine.
@@ -76,7 +76,7 @@ class Enumerator(object):
         function that returns the log marginal likelihood of a given model
     prior_func : func
         function that returns the prior probability of a given model
-    
+
     Attributes
     ----------
     nobs : int
@@ -89,25 +89,25 @@ class Enumerator(object):
         response vector
     posterior: Counter
         posterior distribution over the model space where
-        str(model) is the key and the posterior probability is the value
+        tuple(model) is the key and the posterior probability is the value
     """
-    
+
     def __init__(self, X, y, likelihood_func, prior_func):
-        
+
         self.X = X
         self.y = y
         self.nobs, self.ndim = X.shape
-        
+
         self._get_likelihood = likelihood_func
         self._get_prior_prob = prior_func
-        
-    
+
+
     def select(self):
         """Compute the posterior probability distribution by enumerating all 2^ndim models.
         """
-        
+
         models = np.array(list(product((0, 1), repeat = self.ndim)))
-        
+
         # compute model probabilities
         priors = np.array([
             np.log(self._get_prior_prob(np.sum(model), self.ndim))
@@ -118,17 +118,17 @@ class Enumerator(object):
             for model in models
         ])
         posteriors = np.e ** (priors + likelihoods - log_sum_exp(priors + likelihoods))
-        
+
         # summarize
         self.posterior = Counter({
-            str(models[i]):posteriors[i]
+            tuple(models[i]):posteriors[i]
             for i in range(len(models))
         })
 
 
     def test_single_coefficients(self):
         """Evaluate the inclusion probability of single coefficients.
-        
+
         Returns
         -------
         np.ndarray
@@ -136,16 +136,16 @@ class Enumerator(object):
         """
 
         weighted_models = np.array([
-            weight * np.fromstring(model[1:-1], dtype=bool, sep=" ")
+            weight * np.array(model)
             for model, weight in self.posterior.items()
         ])
-        
+
         return np.sum(weighted_models, 0)
-        
+
 
     def test_joint_coefficients(self, indices):
         """Evaluate the joint inclusion probability of multiple coefficients.
-        
+
         Parameters
         ----------
         indices : array_like in {0, .., ndim - 1}
@@ -156,31 +156,31 @@ class Enumerator(object):
         float
             joint inclusion probability
         """
-    
+
         return sum(
             weight
             for model, weight in self.posterior.items()
-            if np.all(np.fromstring(model[1:-1], sep=" ")[indices])
+            if np.all(np.array(model)[indices])
         )
 
 
     def get_model_size_dist(self):
         """Evaluate the posterior model size distribution.
-        
+
         Returns
         -------
         np.ndarray
             (ndim + 1 x 1) posterior model size probabilities
         """
-        
+
         dist = np.zeros(self.ndim + 1)
-        
+
         for model, weight in self.posterior.items():
-            dist[np.sum(np.fromstring(model[1:-1], sep=" "))] += weight
+            dist[sum(model)] += weight
 
         return dist
-        
-        
+
+
 
 class MC3(Enumerator, mcmc.MetropolisSampler):
     """Generic model averaging routine based on the Metropolis-Hastings algorithm.
@@ -197,7 +197,7 @@ class MC3(Enumerator, mcmc.MetropolisSampler):
         function that returns the log marginal likelihood of a given model
     prior_func : func
         function that returns the prior probability of a given model
-    
+
     Attributes
     ----------
     nobs : int
@@ -210,9 +210,9 @@ class MC3(Enumerator, mcmc.MetropolisSampler):
         response vector
     posterior: Counter
         posterior distribution over the model space where
-        str(model) is the key and the posterior probability is the value
+        tuple(model) is the key and the posterior probability is the value
     """
-    
+
     def select(self, niter=10000, method="random"):
         """Estimate the posterior probability distribution through MCMC simulation.
 
@@ -231,8 +231,8 @@ class MC3(Enumerator, mcmc.MetropolisSampler):
         # summarize
         counts = Counter()
         for i in range(self.draws.shape[0]):
-            counts[str(np.array(self.draws[i,:], dtype=int)).replace("\n", "")] += 1
-            
+            counts[tuple(self.draws[i,:])] += 1
+
         self.posterior = Counter({
             key:(counts[key] / sum(counts.values()))
             for key in counts
@@ -255,13 +255,13 @@ class MC3(Enumerator, mcmc.MetropolisSampler):
 
         prior = np.log(self._get_prior_prob(np.sum(model), self.ndim))
         likelihood = self._get_likelihood(model)
-        
+
         return likelihood + prior
 
 
     def _propose(self, state):
         """Draw a candidate from the proposal distrubtion.
-        
+
         Parameters
         ----------
         state : np.ndarray in {0, 1}^ndim
@@ -305,7 +305,7 @@ class MC3(Enumerator, mcmc.MetropolisSampler):
 
     def _get_proposal_prob(self, proposal, state):
         """Compute the probability of proposing "proposal" given "state".
-        
+
         Parameters
         ----------
         proposal : np.ndarray in {0, 1}^ndim
@@ -318,7 +318,7 @@ class MC3(Enumerator, mcmc.MetropolisSampler):
         float
             probability of proposal
         """
-        
+
         if self.method == "prior":
             prob_dplus = binom(
                 len(state),

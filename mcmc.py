@@ -4,7 +4,7 @@ Provides routines for Markov Chain Monte Carlo (MCMC) sampling.
 References
 ----------
 See Hastings (1970) for details on the Metropolis-Hastings algorithm.
-See Sokal (1997) for justification and estimation of IAT and EAT.
+See Sokal (1997) for MCMC diagnostics.
 """
 
 import numpy as np
@@ -14,7 +14,7 @@ from collections import Counter
 
 def get_kendalltau_bin(sample1, sample2):
     """Calculate Kendall's tau-b in O(n) time.
-    
+
     Parameters
     ----------
     sample1/2 : array_like in {0, 1}^ndim
@@ -48,7 +48,7 @@ def est_bin_acf(series):
     ----------
     series : array_like in {0, 1}^d
         binary time series
-    
+
     Returns
     -------
     np.ndarray
@@ -59,6 +59,32 @@ def est_bin_acf(series):
         get_kendalltau_bin(series[lag:], series[:-lag])
         for lag in range(1, 100 + 1)
     ]
+
+
+def est_acf(series):
+    """Estimate the autocorrelation function.
+
+    Parameters
+    ----------
+    series : array_like in R^d
+        binary time series
+
+    Returns
+    -------
+    np.ndarray
+        acf up to lag n // 100, starting at lag 1
+    """
+
+    mean = np.mean(series)
+    var = np.mean(series ** 2) - mean ** 2
+
+    acf =  np.array([
+        (np.mean(series[lag:] * series[:-lag]) - mean ** 2) / var
+        for lag in range(1, 100 + 1)
+    ])
+
+    acf[np.isnan(acf)] = 0
+    return acf
 
 
 def est_int_autocor(acf, tradeoff_par=6):
@@ -78,7 +104,7 @@ def est_int_autocor(acf, tradeoff_par=6):
     float
         estimate of the acf's integrated autocorrelation time
     """
-    
+
     int_autocor = 0.5
     for i in range(len(acf)):
         int_autocor += acf[i]
@@ -101,7 +127,7 @@ def est_exp_autocor(acf):
     float
         estimate of the acf's exponential autocorrelation time
     """
-    
+
     return np.nanmax([
         (lag + 1) / -np.log(np.abs(acf[lag]))
         for lag in range(len(acf))
@@ -113,7 +139,7 @@ class MetropolisSampler(object):
     """Generic implementation of the Metropolis-Hastings algorithm.
 
     Draws dependent samples from a probability distribution.
-    
+
     Parameters
     ----------
     rv_prob_func : func
@@ -122,7 +148,7 @@ class MetropolisSampler(object):
         draw from the proposal distribution given the current state
     proposal_prob_func : func
         log probability measure on the proposal distribution
-    
+
     Attributes
     ----------
     draws : np.ndarray
@@ -133,14 +159,14 @@ class MetropolisSampler(object):
         "ndiscard" (estimated number of pre-equilibrium samples)
         "stderr" (standard error of the mean estimator)
     """
-    
+
     def __init__(self, rv_prob_func, proposal_func, proposal_prob_func):
 
         self._get_rv_prob = rv_prob_func
         self._propose = proposal_func
         self._get_proposal_prob = proposal_prob_func
 
-        
+
     def _run(self, init, niter=100000):
         """Run the sampler.
 
@@ -151,10 +177,10 @@ class MetropolisSampler(object):
         niter : int {1, .., inf}
             number of iterations
         """
-    
+
         self.draws = np.empty((niter, len(init)), dtype=np.array(init).dtype)
         state = {"draw": init, "prob": self._get_rv_prob(init)}
-        
+
         for i in range(niter):
             candidate = {"draw": self._propose(state["draw"])}
             candidate["prob"] = self._get_rv_prob(candidate["draw"])
@@ -185,7 +211,7 @@ class MetropolisSampler(object):
 
         odds_ratio = proposal["prob"] - state["prob"]
         proposal_ratio = self._get_proposal_ratio(state, proposal)
-        
+
         if odds_ratio + proposal_ratio > np.log(np.random.uniform()):
             return True
         else:
@@ -223,14 +249,14 @@ class MetropolisSampler(object):
     def _diagnose(self):
         """Compute performance statistics.
         """
-        
-        acfs = [est_bin_acf(series) for series in self.draws.T]
+
+        acfs = [est_acf(series) for series in self.draws.T]
         int_autocor = np.array([est_int_autocor(acf) for acf in acfs])
         ndiscard = 20 * int_autocor
         ess = (self.draws.shape[0] - ndiscard) / 2 / int_autocor
         means = np.array([np.mean(series) for series in self.draws.T])
         stderr = (np.array([np.var(series) for series in self.draws.T]) / ess) ** 0.5
-        
+
         self.diagnostics = {
             "ess": ess,
             "ndiscard": ndiscard,
